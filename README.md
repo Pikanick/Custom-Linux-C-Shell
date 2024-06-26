@@ -18,11 +18,10 @@ This project is a simple shell implementation in C that supports basic command e
 - Unix-like Operating System
 
 ## Compilation
-To compile the shell, run:
+To compile the `shell.c` file, run:
 ```bash
-make
+gcc -o shell shell.c
 ```
-This will generate an executable named `shell`.
 
 ## Usage
 To start the shell, run:
