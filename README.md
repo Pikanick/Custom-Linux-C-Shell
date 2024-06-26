@@ -19,16 +19,16 @@ This project is a simple shell implementation in C that supports basic command e
 
 ## Compilation
 To compile the shell, run:
-\`\`\`bash
+```bash
 make
-\`\`\`
+```
 This will generate an executable named `shell`.
 
 ## Usage
 To start the shell, run:
-\`\`\`bash
+```bash
 ./shell
-\`\`\`
+```
 
 ### Commands
 - **Basic Commands**: You can run any command available in the system's PATH.
@@ -40,9 +40,9 @@ To start the shell, run:
 
 ## Clean Up
 To clean up the compiled files, run:
-\`\`\`bash
+```bash
 make clean
-\`\`\`
+```
 
 ## Implementation Details
 The shell implementation includes:
