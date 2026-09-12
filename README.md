@@ -37,6 +37,16 @@ To start the shell, run:
 ### Built-in Commands
 - **history**: Displays the list of recently executed commands.
 
+## Testing
+A black-box test suite drives the compiled shell over a pipe and checks
+for the bugs this project used to have (crashing on Ctrl+D/Ctrl+C, a
+`cd ~/<long path>` buffer overflow, and an off-by-one in `!!`/history).
+Build the shell first, then run:
+```bash
+make
+python3 test_shell.py
+```
+
 ## Clean Up
 To clean up the compiled files, run:
 ```bash
