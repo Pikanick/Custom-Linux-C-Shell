@@ -10,6 +10,7 @@
 #include <sys/wait.h>
 #include <pwd.h>
 #include <errno.h>
+#include <signal.h>
 
 #define COMMAND_LENGTH 1024
 #define NUM_TOKENS (COMMAND_LENGTH / 2 + 1)
@@ -105,9 +106,23 @@ int read_command(char *buff, char *tokens[], _Bool *in_background) {
   // Read input
   int length = read(STDIN_FILENO, buff, COMMAND_LENGTH - 1);
 
-  if ((length < 0) && (errno != EINTR)) {
+  if (length < 0) {
+    if (errno == EINTR) {
+      // Interrupted by a signal (e.g. Ctrl+C while waiting for input).
+      // There's no command to tokenize; let the caller re-prompt instead
+      // of falling through to index buff[-1] below.
+      buff[0] = '\0';
+      return 0;
+    }
     perror("Unable to read command from keyboard. Terminating.\n");
     exit(-1);
+  }
+
+  if (length == 0) {
+    // EOF on stdin (e.g. Ctrl+D). Exit cleanly like a normal shell
+    // instead of falling through to strlen(buff) - 1 == (size_t)-1.
+    write(STDOUT_FILENO, "\n", 1);
+    exit(0);
   }
 
   // Null terminate and strip \n.
@@ -214,8 +229,11 @@ void print_history(char history[HISTORY_DEPTH][COMMAND_LENGTH], int cmd_count) {
   if (cmd_count <= 10) {
     // only up to cmd_count
     for (int i = cmd_count-1; i >= 0; --i) {
-      // print descending from current count
-      my_printf("%d\t", i);
+      // print descending from current count. Label with the absolute,
+      // 1-indexed lifetime command number (i+1), matching the numbering
+      // fetch_prev_cmd expects for "!N" and matching the other branch
+      // below once history has wrapped past HISTORY_DEPTH entries.
+      my_printf("%d\t", i + 1);
       write(STDOUT_FILENO, history[i], COMMAND_LENGTH);
     }
   }
@@ -243,10 +261,13 @@ int fetch_prev_cmd(char history[HISTORY_DEPTH][COMMAND_LENGTH], int cmd_count, c
   }
   int arr_ind;
   if (cmd_count >= HISTORY_DEPTH) {
-    arr_ind = HISTORY_DEPTH - cmd_count-1 + n;
+    arr_ind = HISTORY_DEPTH - cmd_count - 1 + n;
   }
   else {
-    arr_ind = n;
+    // n is the absolute, 1-indexed lifetime command number (matching
+    // print_history's labels above), which sits at arr_ind = n - 1 while
+    // fewer than HISTORY_DEPTH commands have ever been run.
+    arr_ind = n - 1;
   }
   // check if in range
   if (0 <= arr_ind && arr_ind < 10)
@@ -262,7 +283,8 @@ int fetch_prev_cmd(char history[HISTORY_DEPTH][COMMAND_LENGTH], int cmd_count, c
  * Print the messages for
  * 'help' without any arguments
 */
-void disp_help_menu() {
+void disp_help_menu(int sig) {
+  (void)sig;
   write(STDOUT_FILENO, "\n", 1);
   write(STDOUT_FILENO, "'help' is a builtin command that describes other builtin commands, including internal ones:\n", 93);
   write(STDOUT_FILENO, "- 'cd' changes the current working directory.\n", 47);
@@ -277,7 +299,10 @@ void printwd() {
   char buff[PBUFF_LEN];
   memset(buff, 0, PBUFF_LEN);
   getcwd(buff, PBUFF_LEN);
-  write(STDOUT_FILENO, buff, PBUFF_LEN);
+  // Only write the actual path, not the whole (mostly zero-padded) buffer:
+  // writing all PBUFF_LEN bytes dumped ~2KB of NUL bytes to the terminal
+  // on every single prompt.
+  write(STDOUT_FILENO, buff, strlen(buff));
 }
 
 /**
@@ -327,7 +352,10 @@ int main(int argc, char *argv[]) {
       // write(STDOUT_FILENO, "\n", 1);
       // my_printf("fetching # %i\n", cmd_count-1);
       // error
-      if (0 < fetch_prev_cmd(history, cmd_count, input_buffer, cmd_count-1)) {
+      // Fetch the most recently run command -- absolute number
+      // `cmd_count`, using the same 1-indexed convention as "!N" and as
+      // the numbers `history` prints.
+      if (0 < fetch_prev_cmd(history, cmd_count, input_buffer, cmd_count)) {
         // /\ already prints error
         continue;
       }
@@ -396,17 +424,25 @@ int main(int argc, char *argv[]) {
         struct passwd* user_info = getpwuid(getuid());
         int cur_path_len = strlen(tokens[1]);
         char* home_dir = user_info->pw_dir;
+        // Buffer for the expanded "~..." path. Sized for the worst case
+        // (a full home directory plus a full command's worth of the rest
+        // of the path) and pointed to by tokens[1] below, instead of the
+        // old approach of strcpy-ing the expansion back into tokens[1] in
+        // place -- which overflowed input_buffer whenever the expansion
+        // was longer than the original "~..." token.
+        static char expanded_path[2048 + COMMAND_LENGTH];
         // just a tilde
         if (cur_path_len == 1) {
           tokens[1] = home_dir;
         }
         else if (cur_path_len > 1) {
-          char final_path[cur_path_len + strlen(home_dir)];
+          memset(expanded_path, 0, sizeof(expanded_path));
           // copy out the latter part of the path
-          strcpy(final_path, home_dir);
+          strncat(expanded_path, home_dir, sizeof(expanded_path) - 1);
           // subbing out the leading "~"
-          strcat(final_path, tokens[1] + 1);
-          strcpy(tokens[1], final_path);
+          strncat(expanded_path, tokens[1] + 1,
+                   sizeof(expanded_path) - strlen(expanded_path) - 1);
+          tokens[1] = expanded_path;
         }
         write(STDOUT_FILENO, "Path now ", 9);
         write(STDOUT_FILENO, tokens[1], strlen(tokens[1]));
@@ -453,12 +489,12 @@ int main(int argc, char *argv[]) {
       }
       // just `help`
       else {
-        disp_help_menu();
+        disp_help_menu(0);
       }
     }
 
     // not internal command
-    else if (errno != EINTR)
+    else
     {
       // my_printf("Parent pid = %d\n", getpid());
       // fork the command into the right process
