@@ -184,12 +184,18 @@ void tokens_to_inbuf(char* inbuf, char* tokens[], int num_tokens, _Bool in_bkgnd
   //   char* ptmp= &tmp;
   //   strcpy(tokens[num_tokens-1], ptmp);
   // }
-  char tmp = ' ';
-  char* ptmp = &tmp;
+  // The old `char tmp = ' '; char* ptmp = &tmp;` here treated a single
+  // uninitialized-neighbor stack byte as if it were a null-terminated
+  // string: strcat(inbuf, ptmp) reads from `tmp` looking for a NUL that
+  // isn't guaranteed to be there. It happened to work when the next byte
+  // on the stack was zero by luck, but AddressSanitizer catches the real
+  // out-of-bounds read (stack-buffer-overflow) as soon as it isn't --
+  // e.g. the very first multi-token command run through history/"!!".
+  // A real null-terminated string literal has no such problem.
   for (int i=0; i < num_tokens-1; ++i) {
     //strcat(destination,source);
     strcat(inbuf, tokens[i]);
-    strcat(inbuf, ptmp);
+    strcat(inbuf, " ");
   }
   // don't want space after last one
   if (num_tokens > 0) {
